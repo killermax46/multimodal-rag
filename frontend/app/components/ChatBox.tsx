@@ -19,15 +19,20 @@ const urlRegex = /(https?:\/\/[^\s]+)/g;
 
 function renderMessageContent(text: string) {
   const parts = text.split(urlRegex);
+
   return parts.map((part, index) => {
-    if (part.startsWith("http://") || part.startsWith("https://")) {
+    if (part.startsWith("http")) {
       return (
         <a
           key={index}
           href={part}
           target="_blank"
           rel="noreferrer"
-          className="chat-link"
+          style={{
+            color: "#4f46e5",
+            textDecoration: "underline",
+            wordBreak: "break-all",
+          }}
         >
           {part}
         </a>
@@ -37,271 +42,215 @@ function renderMessageContent(text: string) {
   });
 }
 
-export default function ChatBox({ docId, docName, onDocumentChange, existingNames }: ChatBoxProps) {
+export default function ChatBox({
+  docId,
+  docName,
+  onDocumentChange,
+  existingNames,
+}: ChatBoxProps) {
   const [msg, setMsg] = useState("");
   const [chat, setChat] = useState<ChatMessage[]>([]);
   const [loading, setLoading] = useState(false);
-  const [uploadingImage, setUploadingImage] = useState(false);
-  const [mode, setMode] = useState<"rag" | "web_search" | "ui_generator" | "youtube">("rag");
-  const [youtubeUrl, setYoutubeUrl] = useState("");
-  const [youtubeLoading, setYoutubeLoading] = useState(false);
-  const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const [mode, setMode] = useState<
+    "rag" | "web_search" | "ui_generator" | "youtube"
+  >("rag");
+
   const chatEndRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
-    if (chatEndRef.current) {
-      chatEndRef.current.scrollIntoView({ behavior: "smooth" });
-    }
+    chatEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [chat]);
 
   const send = async () => {
-    const trimmed = msg.trim();
-    if (!trimmed || loading || uploadingImage) return;
+    if (!msg.trim()) return;
 
-    const userMessage: ChatMessage = { role: "user", content: trimmed };
-    setChat(prev => [...prev, userMessage]);
+    const userMessage: ChatMessage = {
+      role: "user",
+      content: msg,
+    };
+
+    setChat((prev) => [...prev, userMessage]);
     setMsg("");
     setLoading(true);
 
     try {
-      const res = await axios.post(`${API}/chat`, { message: trimmed, doc_id: docId, mode });
-      const botMessage: ChatMessage = {
-        role: "bot",
-        content: res.data.response ?? "No response received.",
-      };
-      setChat(prev => [...prev, botMessage]);
-    } catch (err) {
-      setChat(prev => [
+      const res = await axios.post(`${API}/chat`, {
+        message: msg,
+        doc_id: docId,
+        mode,
+      });
+
+      setChat((prev) => [
         ...prev,
-        { role: "bot", content: "Something went wrong while contacting the server." },
+        {
+          role: "bot",
+          content: res.data.response ?? "No response.",
+        },
+      ]);
+    } catch {
+      setChat((prev) => [
+        ...prev,
+        {
+          role: "bot",
+          content: "⚠️ Server error. Try again.",
+        },
       ]);
     } finally {
       setLoading(false);
     }
   };
 
-  const handleSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
-    send();
-  };
-
-  const ingestYoutube = async () => {
-    const url = youtubeUrl.trim();
-    if (!url || youtubeLoading) return;
-
-    setYoutubeLoading(true);
-    try {
-      const res = await axios.post(`${API}/youtube_ingest`, { url });
-      const data = res.data as {
-        doc_id?: string;
-        title?: string;
-        summary?: string;
-        error?: string;
-      };
-
-      if (data.error) {
-        setChat(prev => [
-          ...prev,
-          { role: "bot", content: `YouTube error: ${data.error}` },
-        ]);
-        return;
-      }
-
-      if (data.doc_id && onDocumentChange) {
-        onDocumentChange(data.doc_id, data.title ?? url);
-      }
-
-      if (data.summary) {
-        setChat(prev => [
-          ...prev,
-          {
-            role: "bot",
-            content: `Loaded YouTube video${data.title ? `: ${data.title}` : ""}.\n\nSummary:\n${data.summary}`,
-          },
-        ]);
-      }
-
-      setYoutubeUrl("");
-    } catch {
-      setChat(prev => [
-        ...prev,
-        { role: "bot", content: "Failed to load YouTube video." },
-      ]);
-    } finally {
-      setYoutubeLoading(false);
-    }
-  };
-
-  const openImagePicker = () => {
-    if (loading || uploadingImage || youtubeLoading) return;
-    fileInputRef.current?.click();
-  };
-
-  const handleImageChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file || youtubeLoading) return;
-
-    if (existingNames && existingNames.includes(file.name)) {
-      alert("This document has already been uploaded.");
-      return;
-    }
-
-    const form = new FormData();
-    form.append("file", file);
-
-    setUploadingImage(true);
-    try {
-      const res = await axios.post(`${API}/upload`, form);
-      const data = res.data as { doc_id?: string; file_name?: string };
-      if (data.doc_id && onDocumentChange) {
-        onDocumentChange(data.doc_id, data.file_name ?? file.name);
-      }
-      setChat(prev => [
-        ...prev,
-        {
-          role: "bot",
-          content: `Image "${file.name}" uploaded. Ask a question about this image or document.`,
-        },
-      ]);
-    } catch {
-      setChat(prev => [
-        ...prev,
-        { role: "bot", content: "Image upload failed." },
-      ]);
-    } finally {
-      setUploadingImage(false);
-      if (fileInputRef.current) {
-        fileInputRef.current.value = "";
-      }
-    }
-  };
-
   return (
-    <div className="chat-box">
-      {docName && mode === "rag" && (
-        <p className="chat-empty" style={{ marginBottom: 4 }}>
-          Answering using: <strong>{docName}</strong>
-        </p>
-      )}
-      <div className="chat-mode-row">
-        <span className="chat-mode-label">Source:</span>
-        <button
-          type="button"
-          className={
-            "chat-mode-pill" + (mode === "rag" ? " chat-mode-pill-active" : "")
-          }
-          onClick={() => setMode("rag")}
-          disabled={loading}
-        >
-          Documents
-        </button>
-        <button
-          type="button"
-          className={
-            "chat-mode-pill" + (mode === "web_search" ? " chat-mode-pill-active" : "")
-          }
-          onClick={() => setMode("web_search")}
-          disabled={loading}
-        >
-          Web search
-        </button>
-        <button
-          type="button"
-          className={
-            "chat-mode-pill" + (mode === "ui_generator" ? " chat-mode-pill-active" : "")
-          }
-          onClick={() => setMode("ui_generator")}
-          disabled={loading}
-        >
-          UI generator
-        </button>
-        <button
-          type="button"
-          className={
-            "chat-mode-pill" + (mode === "youtube" ? " chat-mode-pill-active" : "")
-          }
-          onClick={() => setMode("youtube")}
-          disabled={loading}
-        >
-          YouTube video
-        </button>
-      </div>
-      {mode === "youtube" && (
-        <div className="chat-youtube-row">
-          <div className="chat-youtube-field">
-            <div className="chat-youtube-label">YouTube video URL</div>
-            <input
-              className="chat-youtube-input"
-              placeholder="Paste YouTube URL to index the video..."
-              value={youtubeUrl}
-              onChange={e => setYoutubeUrl(e.target.value)}
-            />
-          </div>
-          <button
-            type="button"
-            className="chat-youtube-btn"
-            onClick={ingestYoutube}
-            disabled={!youtubeUrl.trim() || youtubeLoading}
-          >
-            {youtubeLoading ? "Loading..." : "Load video"}
-          </button>
+    <div
+      style={{
+        display: "flex",
+        flexDirection: "column",
+        height: "100%",
+        borderRadius: "18px",
+        overflow: "hidden",
+        background: "linear-gradient(180deg,#f8fafc,#eef2ff)",
+        border: "1px solid #e5e7eb",
+      }}
+    >
+      {/* HEADER */}
+      <div
+        style={{
+          padding: "14px",
+          borderBottom: "1px solid #e5e7eb",
+          background: "white",
+        }}
+      >
+        <div style={{ fontWeight: 700, fontSize: "16px" }}>
+          💬 Study Assistant AI
         </div>
-      )}
-      <div className="chat-messages">
+        <div style={{ fontSize: "12px", opacity: 0.6 }}>
+          {docName ? `Using: ${docName}` : "No document selected"}
+        </div>
+      </div>
+
+      {/* MODE SELECTOR */}
+      <div
+        style={{
+          display: "flex",
+          gap: "8px",
+          padding: "10px",
+          background: "#f9fafb",
+          borderBottom: "1px solid #e5e7eb",
+          flexWrap: "wrap",
+        }}
+      >
+        {["rag", "web_search", "ui_generator", "youtube"].map((m) => (
+          <button
+            key={m}
+            onClick={() => setMode(m as any)}
+            style={{
+              padding: "6px 10px",
+              borderRadius: "999px",
+              fontSize: "12px",
+              border:
+                mode === m ? "1px solid #4f46e5" : "1px solid #e5e7eb",
+              background: mode === m ? "#4f46e5" : "white",
+              color: mode === m ? "white" : "#111827",
+              cursor: "pointer",
+              transition: "0.2s",
+            }}
+          >
+            {m}
+          </button>
+        ))}
+      </div>
+
+      {/* CHAT AREA */}
+      <div
+        style={{
+          flex: 1,
+          overflowY: "auto",
+          padding: "16px",
+          display: "flex",
+          flexDirection: "column",
+          gap: "10px",
+        }}
+      >
         {chat.length === 0 && (
-          <p className="chat-empty">Ask a question about your uploaded document to get started.</p>
+          <div style={{ opacity: 0.5, fontSize: "14px" }}>
+            Start asking something...
+          </div>
         )}
+
         {chat.map((m, i) => (
           <div
             key={i}
-            className={`message-row ${m.role === "user" ? "message-row-user" : "message-row-bot"}`}
+            style={{
+              display: "flex",
+              justifyContent: m.role === "user" ? "flex-end" : "flex-start",
+            }}
           >
-            <div className={`message-bubble message-bubble-${m.role}`}>
-              <span className="message-author">{m.role === "user" ? "You" : "Bot"}</span>
-              <p className="message-text">{renderMessageContent(m.content)}</p>
+            <div
+              style={{
+                maxWidth: "70%",
+                padding: "10px 14px",
+                borderRadius: "14px",
+                fontSize: "14px",
+                background:
+                  m.role === "user"
+                    ? "linear-gradient(135deg,#4f46e5,#6366f1)"
+                    : "white",
+                color: m.role === "user" ? "white" : "#111827",
+                border: m.role === "bot" ? "1px solid #e5e7eb" : "none",
+                boxShadow:
+                  m.role === "bot"
+                    ? "0 2px 10px rgba(0,0,0,0.04)"
+                    : "none",
+              }}
+            >
+              {renderMessageContent(m.content)}
             </div>
           </div>
         ))}
+
         <div ref={chatEndRef} />
       </div>
-      <form className="chat-input-row" onSubmit={handleSubmit}>
+
+      {/* INPUT */}
+      <div
+        style={{
+          display: "flex",
+          gap: "10px",
+          padding: "12px",
+          borderTop: "1px solid #e5e7eb",
+          background: "white",
+        }}
+      >
         <input
-          className="chat-input"
-          placeholder={
-            mode === "web_search"
-              ? "Search the web with AI..."
-              : mode === "ui_generator"
-              ? "Describe the UI component you want (e.g. a login card)..."
-              : mode === "youtube"
-              ? "Ask a question about this YouTube video..."
-              : "Ask a question about your document..."
-          }
           value={msg}
-          onChange={e => setMsg(e.target.value)}
+          onChange={(e) => setMsg(e.target.value)}
+          placeholder="Ask something..."
+          style={{
+            flex: 1,
+            padding: "10px 12px",
+            borderRadius: "999px",
+            border: "1px solid #e5e7eb",
+            outline: "none",
+            fontSize: "14px",
+          }}
         />
+
         <button
-          type="button"
-          className="chat-attach-btn"
-          onClick={openImagePicker}
-          disabled={loading || uploadingImage || youtubeLoading}
+          onClick={send}
+          disabled={loading}
+          style={{
+            padding: "10px 16px",
+            borderRadius: "999px",
+            border: "none",
+            background: "#4f46e5",
+            color: "white",
+            cursor: "pointer",
+            fontWeight: 600,
+          }}
         >
-          {uploadingImage ? "Uploading..." : "Add image"}
+          {loading ? "..." : "Send"}
         </button>
-        <button
-          type="submit"
-          className="chat-send-btn"
-          disabled={!msg.trim() || loading || uploadingImage || youtubeLoading}
-        >
-          {loading ? "Thinking..." : "Send"}
-        </button>
-        <input
-          ref={fileInputRef}
-          type="file"
-          accept="image/*"
-          onChange={handleImageChange}
-          style={{ display: "none" }}
-        />
-      </form>
+      </div>
     </div>
   );
 }

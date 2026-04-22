@@ -156,6 +156,21 @@ async def chat(payload: dict):
             result = TOOLS["generate_ui"](query)
             return {"response": result, "source": "ui_generator"}
 
+    # ---------- GREETING DETECTION ----------
+    greetings = {"hi", "hello", "hey", "hiya", "howdy", "greetings", "good morning", "good afternoon", "good evening", "how are you", "what's up", "sup", "yo"}
+    query_lower = query.lower().strip()
+    is_greeting = any(query_lower.startswith(g) or query_lower == g for g in greetings)
+    
+    if is_greeting:
+        greetings_response = {
+            "hi": "Hi there! 👋 How can I help you today? Feel free to ask me questions about your documents.",
+            "hello": "Hello! 👋 I'm here to help. What would you like to know?",
+            "hey": "Hey! 😊 What can I assist you with?",
+            "how are you": "I'm doing great, thanks for asking! How can I help you?",
+        }
+        response = next((v for k, v in greetings_response.items() if query_lower.startswith(k) or query_lower == k), "Hi! How can I help you today?")
+        return {"response": response, "source": "greeting"}
+
     # ---------- RAG ----------
     q_vec = embed_text(query)
     text_context = retrieve_text(q_vec, doc_id=doc_id)

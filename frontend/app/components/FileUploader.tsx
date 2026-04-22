@@ -1,8 +1,14 @@
+"use client";
+
 import axios from "axios";
 import { useState, useRef, useEffect } from "react";
 import DocumentInspector from "./DocumentInspector";
 
-const API = process.env.NEXT_PUBLIC_API_URL!;
+const API = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+
+/* =========================
+   TYPES
+========================= */
 
 type FileUploaderProps = {
   onUploaded?: (docId: string, fileName: string) => void;
@@ -16,90 +22,171 @@ type LocalDoc = {
   url: string;
 };
 
+/* =========================
+   COMPONENT
+========================= */
+
 export default function FileUploader({
   onUploaded,
   existingNames,
   activeDocName,
 }: FileUploaderProps) {
-  const [selectedFile, setSelectedFile] = useState<File | null>(null);
+  const [file, setFile] = useState<File | null>(null);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
-  const [showPreview, setShowPreview] = useState(false);
   const [localDocs, setLocalDocs] = useState<LocalDoc[]>([]);
+  const [showPreview, setShowPreview] = useState(false);
+  const [uploading, setUploading] = useState(false);
+
   const inputRef = useRef<HTMLInputElement | null>(null);
 
+  /* =========================
+     SYNC ACTIVE DOC
+  ========================= */
   useEffect(() => {
     if (!activeDocName) return;
-    const match = localDocs.find(d => d.name === activeDocName);
-    if (!match) {
-      setShowPreview(false);
-      return;
-    }
-    setSelectedFile(match.file);
+
+    const match = localDocs.find((d) => d.name === activeDocName);
+
+    if (!match) return;
+
+    setFile(match.file);
     setPreviewUrl(match.url);
   }, [activeDocName, localDocs]);
 
-  const upload = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
+  /* =========================
+     FILE UPLOAD
+  ========================= */
+  const uploadFile = async (selected?: File) => {
+    const f = selected || file;
+    if (!f) return;
 
-    if (existingNames && existingNames.includes(file.name)) {
-      alert("This document has already been uploaded.");
+    if (existingNames?.includes(f.name)) {
       return;
     }
 
     const form = new FormData();
-    form.append("file", file);
+    form.append("file", f);
 
-    const res = await axios.post(`${API}/upload`, form);
-    const data = res.data as { doc_id?: string; file_name?: string };
-    if (data.doc_id && onUploaded) {
-      onUploaded(data.doc_id, data.file_name ?? file.name);
+    setUploading(true);
+
+    try {
+      const res = await axios.post(`${API}/upload`, form);
+
+      const data = res.data;
+
+      if (data?.doc_id && onUploaded) {
+        onUploaded(data.doc_id, data.file_name || f.name);
+      }
+
+      const url = URL.createObjectURL(f);
+
+      setLocalDocs((prev) => [
+        ...prev,
+        { name: f.name, file: f, url },
+      ]);
+
+      setFile(f);
+      setPreviewUrl(url);
+      setShowPreview(false);
+    } catch {
+      alert("Upload failed");
+    } finally {
+      setUploading(false);
     }
-    alert("File uploaded and ingested.");
-
-    const url = URL.createObjectURL(file);
-    setLocalDocs(prev => [...prev, { name: file.name, file, url }]);
-    setSelectedFile(file);
-    setPreviewUrl(url);
-    setShowPreview(false);
   };
 
-  const openNewUpload = () => {
+  /* =========================
+     FILE PICK
+  ========================= */
+  const handlePick = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const selected = e.target.files?.[0];
+    if (!selected) return;
+    uploadFile(selected);
+  };
+
+  const openPicker = () => {
     inputRef.current?.click();
   };
 
+  /* =========================
+     DRAG & DROP
+  ========================= */
+  const handleDrop = (e: React.DragEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    const dropped = e.dataTransfer.files?.[0];
+    if (dropped) uploadFile(dropped);
+  };
+
+  /* =========================
+     UI
+  ========================= */
+
   return (
     <div className="uploader">
-      <div className="uploader-row">
-        <label className="uploader-label">
-          <span className="uploader-title">Upload document</span>
-          <span className="uploader-help">PDFs or images up to a few MB.</span>
-          <input
-            ref={inputRef}
-            type="file"
-            onChange={upload}
-            className="uploader-input"
-          />
-        </label>
-        {selectedFile && (
-          <>
-            <button type="button" className="uploader-secondary" onClick={openNewUpload}>
-              Upload new document
-            </button>
-            <button
-              type="button"
-              className="uploader-secondary"
-              onClick={() => setShowPreview(p => !p)}
-            >
-              {showPreview ? "Hide preview" : "Show preview"}
-            </button>
-          </>
-        )}
+
+      {/* DROP ZONE */}
+      <div
+        className="uploader-dropzone"
+        onDragOver={(e) => e.preventDefault()}
+        onDrop={handleDrop}
+        onClick={openPicker}
+      >
+        <div className="uploader-drop-inner">
+          <div className="uploader-icon">📄</div>
+
+          <div>
+            <p className="uploader-title">
+              Drop file or click to upload
+            </p>
+            <p className="uploader-help">
+              PDF, images, docs supported
+            </p>
+          </div>
+        </div>
+
+        <input
+          ref={inputRef}
+          type="file"
+          onChange={handlePick}
+          className="uploader-input"
+        />
       </div>
 
-      {selectedFile && showPreview && previewUrl && (
+      {/* ACTION BAR */}
+      {file && (
+        <div className="uploader-actions">
+          <div className="uploader-file-card">
+            <span>📎 {file.name}</span>
+            {uploading && <span>Uploading...</span>}
+          </div>
+
+          <div className="uploader-buttons">
+            <button
+              type="button"
+              className="uploader-btn"
+              onClick={openPicker}
+            >
+              Replace
+            </button>
+
+            <button
+              type="button"
+              className="uploader-btn primary"
+              onClick={() => setShowPreview((p) => !p)}
+            >
+              {showPreview ? "Hide" : "Preview"}
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* PREVIEW */}
+      {file && showPreview && previewUrl && (
         <div className="uploader-preview">
-          <DocumentInspector file={selectedFile} previewUrl={previewUrl} />
+          <DocumentInspector
+            file={file}
+            previewUrl={previewUrl}
+          />
         </div>
       )}
     </div>

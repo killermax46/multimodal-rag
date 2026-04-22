@@ -5,7 +5,8 @@ from PIL import Image
 
 client = OpenAI()
 
-MAX_CHARS_PER_CHUNK = 2000
+MAX_CHARS_PER_CHUNK = 800
+CHUNK_OVERLAP = 200
 
 def embed_text(text: str):
     res = client.embeddings.create(
@@ -14,9 +15,35 @@ def embed_text(text: str):
     )
     return res.data[0].embedding   # 3072-dim
 
-def chunk_text(text: str, max_chars: int = MAX_CHARS_PER_CHUNK):
-    for i in range(0, len(text), max_chars):
-        yield text[i : i + max_chars]
+def chunk_text(text: str, max_chars: int = MAX_CHARS_PER_CHUNK, overlap: int = CHUNK_OVERLAP):
+    """Smart chunking with overlap and sentence-aware splitting"""
+    chunks = []
+    current_pos = 0
+    
+    while current_pos < len(text):
+        # Find chunk end, preferring sentence boundaries
+        chunk_end = min(current_pos + max_chars, len(text))
+        
+        if chunk_end < len(text):
+            # Look back for sentence boundary (period, newline) within last 100 chars
+            search_start = max(current_pos, chunk_end - 100)
+            last_period = text.rfind(".", search_start, chunk_end)
+            last_newline = text.rfind("\n", search_start, chunk_end)
+            boundary = max(last_period, last_newline)
+            
+            if boundary > search_start:
+                chunk_end = boundary + 1
+        
+        chunk = text[current_pos:chunk_end].strip()
+        if chunk:  # Only add non-empty chunks
+            chunks.append(chunk)
+        
+        # Move to next chunk with overlap for better context
+        if chunk_end >= len(text):
+            break
+        current_pos = chunk_end - overlap
+    
+    return iter(chunks)
 
 def ingest_text(text: str, doc_id: str | None = None):
     vectors = []
